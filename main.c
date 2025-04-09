@@ -1,24 +1,16 @@
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_error.h>
-#include <SDL2/SDL_events.h>
-#include <SDL2/SDL_rect.h>
-#include <SDL2/SDL_render.h>
-#include <SDL2/SDL_surface.h>
-#include <SDL2/SDL_video.h>
-#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-// #define DEBUG_LOG
-#ifdef DEBUG_LOG
-#define _DEBUG_LOG(format, ...) printf(format, ##__VA_ARGS__)
-#else
-#define _DEBUG_LOG(format, ...) ((void)0)
-#endif
+#include "nes.h"
+#include "raylib.h"
 
 typedef struct ROM {
+    char *data;
     char *pgr;
     char *chr;
+    uint32_t pgr_size;
+    uint32_t chr_size;
 } ROM;
 
 typedef struct tile {
@@ -27,21 +19,7 @@ typedef struct tile {
 
 typedef struct chr_bank {
     tile tiles[512];
-    SDL_Texture *texture;
-    SDL_Renderer *renderer;
 } chr_bank;
-
-typedef enum MirroringType { VERTICAL, HORIZONTAL } MirroringType;
-
-const char *get_filename(const char *path);
-void print_usage(const char *executable);
-void sdl_check_return(int code);
-const char *mirroring_type_to_string(MirroringType mt);
-bool is_bit_set(unsigned int number, int bit_position);
-ROM *load_rom(char *fname);
-void unload_rom(ROM *rom);
-SDL_Rect get_tile_from_index(int index);
-void draw_tile(chr_bank *bank, int index);
 
 const char *get_filename(const char *path) {
     const char *filename = path;
@@ -59,48 +37,26 @@ const char *get_filename(const char *path) {
 
 void print_usage(const char *executable) { printf("Usage: %s rom\n", get_filename(executable)); }
 
-void sdl_check_return(int code) {
-    if (code < 0) {
-        fprintf(stderr, "SDL ERROR: %s\n", SDL_GetError());
-        exit(code);
-    }
-}
-const char *mirroring_type_to_string(MirroringType mt) {
+const char *mirroring_type_to_string(enum MirroringType mt) {
     if (mt == VERTICAL) {
         return "Vertical";
     }
     return "Horizontal";
 }
 
-bool is_bit_set(unsigned int number, int bit_position) {
-    unsigned int bitmask = 1 << bit_position;
+bool is_bit_set(const unsigned int number, const int bit_position) { return (number & 1 << bit_position) != 0 ? 1 : 0; }
 
-    // Perform a bitwise AND operation with the number and the bitmask
-    // If the result is non-zero, the bit at bit_position is set
-    return ((number & bitmask) != 0) ? true : false;
-}
-
-ROM *load_rom(char *fname) {
+ROM *load_rom(const char *file_path) {
     char NES_HEADER[4] = {0x4E, 0x45, 0x53, 0x1A};
-    uint32_t nPRG_ROM_PAGES;
-    uint32_t nCHR_ROM_PAGES;
-    MirroringType mtMirroring;
-    bool bHasPRG_RAM;
-    bool bHasTrainer;
-    bool bIgnoreMirroring;
-    bool bVsUnisystem;
-    bool bPlaychoice;
-    bool bNes2Header;
-    uint32_t nMapper;
 
-    FILE *fRom = fopen(fname, "r");
-    if (fRom == NULL) {
+    FILE *rom_file = fopen(file_path, "r");
+    if (rom_file == NULL) {
         fprintf(stderr, "Error opening the file.\n");
         exit(1);
     }
 
     char header[16];
-    if (fread(header, 1, 16, fRom) != 16) {
+    if (fread(header, 1, 16, rom_file) != 16) {
         fprintf(stderr, "Failed to read rom header.\n");
         exit(1);
     }
@@ -112,21 +68,21 @@ ROM *load_rom(char *fname) {
         }
     }
 
-    nPRG_ROM_PAGES = header[4];
-    nCHR_ROM_PAGES = header[5];
-    mtMirroring = is_bit_set(header[6], 0) ? VERTICAL : HORIZONTAL;
-    bHasPRG_RAM = is_bit_set(header[6], 1);
-    bHasTrainer = is_bit_set(header[6], 2);
-    bIgnoreMirroring = is_bit_set(header[6], 3);
-    nMapper = (header[6] & 0xF0) >> 4;
+    const uint32_t prg_rom_pages = (unsigned int)header[4];
+    const uint32_t chr_rom_pages = (unsigned int)header[5];
+    const enum MirroringType mirroring = is_bit_set(header[6], 0) ? VERTICAL : HORIZONTAL;
+    const bool has_prg_ram = is_bit_set(header[6], 1);
+    const bool has_trainer = is_bit_set(header[6], 2);
+    const bool ignore_mirroring = is_bit_set(header[6], 3);
+    const uint32_t mapper = (header[6] & 0xF0) >> 4 & (header[7] & 0xF0);
 
-    bVsUnisystem = (header[7] & 0x0F) > 0;
-    bPlaychoice = is_bit_set(header[7], 1);
-    bNes2Header = is_bit_set(header[7], 2);
-    nMapper &= header[7] & 0xF0;
+    const bool vs_unisystem = (header[7] & 0x0F) > 0;
+    const bool playchoice = is_bit_set(header[7], 1);
+    const bool nes2_header = is_bit_set(header[7], 2);
     printf("NES\n"
-           "PRG ROM: %dKB\n"
-           "CHR ROM: %dKB\n"
+           "PRG ROM: %dKB (0x%04X)\n"
+           "CHR ROM: %dKB (0x%04X)\n"
+           "Total ROM: %dKB (0x%04X)\n"
            "Mirroring: %s\n"
            "PRG RAM: %d\n"
            "Has Trainer: %d\n"
@@ -135,79 +91,67 @@ ROM *load_rom(char *fname) {
            "Playchoice: %d\n"
            "NES 2.0 Header: %d\n"
            "Mapper: %d\n",
-           nPRG_ROM_PAGES * 16, nCHR_ROM_PAGES * 8, mirroring_type_to_string(mtMirroring), bHasPRG_RAM, bHasTrainer, bIgnoreMirroring, bVsUnisystem,
-           bPlaychoice, bNes2Header, nMapper);
+           prg_rom_pages * 16, prg_rom_pages * 16 * 1024, chr_rom_pages * 8, chr_rom_pages * 8 * 1024,
+           (prg_rom_pages * 16) + (chr_rom_pages * 8), ((prg_rom_pages * 16) + (chr_rom_pages * 8)) * 1024,
+           mirroring_type_to_string(mirroring), has_prg_ram, has_trainer, ignore_mirroring, vs_unisystem, playchoice, nes2_header, mapper);
 
-    uint32_t prg_size = nPRG_ROM_PAGES * 16 * 1024;
-    uint32_t chr_size = nCHR_ROM_PAGES * 8 * 1024;
-    ROM *rom = malloc(sizeof(ROM));
-    rom->chr = malloc(chr_size);
-    rom->pgr = malloc(prg_size);
+    uint32_t pgr_size = prg_rom_pages * 16 * 1024;
+    uint32_t chr_size = chr_rom_pages * 8 * 1024;
+    ROM *rom = calloc(1, sizeof(ROM));
+    rom->data = calloc(1, pgr_size + chr_size);
+    rom->pgr = rom->data;
+    rom->chr = &rom->data[pgr_size];
+    rom->chr_size = chr_size;
+    rom->pgr_size = pgr_size;
 
-    if (fread(rom->pgr, 1, prg_size, fRom) != prg_size) {
+    if (fread(rom->pgr, 1, pgr_size, rom_file) != pgr_size) {
         fprintf(stderr, "Failed to read rom PRG data.\n");
         exit(1);
     }
 
-    if (fread(rom->chr, 1, chr_size, fRom) != chr_size) {
+    if (fread(rom->chr, 1, chr_size, rom_file) != chr_size) {
         fprintf(stderr, "Failed to read rom CHR data.\n");
         exit(1);
     }
 
     // Try to trigger EOF
-    fgetc(fRom);
-    if (!feof(fRom)) {
+    fgetc(rom_file);
+    if (!feof(rom_file)) {
         fprintf(stderr, "Read everything but file still has data...\n");
     }
 
-    fclose(fRom);
+    fclose(rom_file);
 
     return rom;
 }
 
 void unload_rom(ROM *rom) {
     if (rom != NULL) {
-        if (rom->chr != NULL) {
-            free(rom->chr);
-        }
-        if (rom->pgr != NULL) {
-            free(rom->pgr);
+        if (rom->data != NULL) {
+            free(rom->data);
         }
         free(rom);
     }
 }
 
-SDL_Rect get_tile_from_index(int index) {
-    int x = index % 32;
-    int y = index / 32;
-    SDL_Rect rect = {x * 8, y * 8, 8, 8};
-    return rect;
-}
-
-void draw_tile(chr_bank *bank, int index) {
-    SDL_Rect origin = get_tile_from_index(index);
-    _DEBUG_LOG("X: %03d, Y: %03d\n", origin.x, origin.y);
-    SDL_SetRenderDrawColor(bank->renderer, 0xFF, 0xFF, 0xFF, 0);
-    SDL_RenderFillRect(bank->renderer, &(SDL_Rect){origin.x, origin.y, 8, 8});
+void draw_tile(const tile *tile, int pos_x, int pos_y, int scale) {
     for (int y = 0; y < 8; y++) {
         for (int x = 0; x < 8; x++) {
-            bool draw = true;
-            switch (bank->tiles[index].data[y][x]) {
+            switch (tile->data[y][x]) {
                 case 0:
-                    draw = false;
+                    DrawRectangle(pos_x + x * scale, pos_y + y * scale, scale, scale, (Color){255, 255, 255, 255});
                     break;
                 case 1:
-                    SDL_SetRenderDrawColor(bank->renderer, 0xFF, 0, 0, 0xFF);
+                    DrawRectangle(pos_x + x * scale, pos_y + y * scale, scale, scale, (Color){255, 0, 0, 255});
                     break;
                 case 2:
-                    SDL_SetRenderDrawColor(bank->renderer, 0xFF, 0x70, 0, 0xFF);
+                    DrawRectangle(pos_x + x * scale, pos_y + y * scale, scale, scale, (Color){255, 0x70, 0, 255});
                     break;
                 case 3:
-                    SDL_SetRenderDrawColor(bank->renderer, 163, 97, 40, 0xFF);
+                    DrawRectangle(pos_x + x * scale, pos_y + y * scale, scale, scale, (Color){163, 97, 40, 255});
                     break;
-            }
-            if (draw) {
-                SDL_RenderFillRect(bank->renderer, &(SDL_Rect){origin.x + x, origin.y + y, 1, 1});
+                default:
+                    break;
             }
         }
     }
@@ -219,77 +163,63 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    Bus *bus = bus_new();
+    bus_free(bus);
+
     char *rom_file = argv[1];
     printf("%s\n", rom_file);
 
-    int r = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
-    sdl_check_return(r);
+    constexpr int WINDOW_WIDTH = 1024;
+    constexpr int WINDOW_HEIGHT = 768;
+    const char *WINDOW_TITLE = "Game Window";
 
-    SDL_Window *window = SDL_CreateWindow("Test", 100, 100, 1200, 800, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE);
+
+    if (!IsWindowReady()) {
+        CloseWindow();
+        return -1;
+    }
 
     ROM *rom = load_rom(rom_file);
     chr_bank bank;
-    int TILE_H = 32;
-    int TILE_V = 16;
-    int TILE_S = 8;
-    bank.renderer = renderer;
-    bank.texture = SDL_CreateTexture(bank.renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, TILE_V * TILE_S, TILE_H * TILE_S);
-    SDL_SetRenderTarget(bank.renderer, bank.texture);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(bank.renderer, 0, 0, 0, 0);
-    SDL_RenderClear(renderer);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    for (int idx = 0; idx < 512; idx++) {
+        for (int row = 0; row < 8; row++) {
+            const int lo = (unsigned char)rom->chr[(idx * 16) + row];
+            const int hi = (unsigned char)rom->chr[(idx * 16) + row + 8];
+            bank.tiles[idx].data[row][7] = ((lo & 0x01) > 0 ? (uint8_t)1 : 0) + ((hi & 0x01) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][6] = ((lo & 0x02) > 0 ? (uint8_t)1 : 0) + ((hi & 0x02) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][5] = ((lo & 0x04) > 0 ? (uint8_t)1 : 0) + ((hi & 0x04) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][4] = ((lo & 0x08) > 0 ? (uint8_t)1 : 0) + ((hi & 0x08) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][3] = ((lo & 0x10) > 0 ? (uint8_t)1 : 0) + ((hi & 0x10) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][2] = ((lo & 0x20) > 0 ? (uint8_t)1 : 0) + ((hi & 0x20) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][1] = ((lo & 0x40) > 0 ? (uint8_t)1 : 0) + ((hi & 0x40) > 0 ? (uint8_t)2 : 0);
+            bank.tiles[idx].data[row][0] = ((lo & 0x80) > 0 ? (uint8_t)1 : 0) + ((hi & 0x80) > 0 ? (uint8_t)2 : 0);
+        }
+    }
 
+    BeginDrawing();
+    constexpr int TILES = 32;
+    constexpr int SCALE = 2;
+    constexpr int TILE_SIZE = 8 * SCALE;
+    constexpr int BASE = 24;
+    ClearBackground(RAYWHITE);
+    constexpr int END_X = 511 % TILES * TILE_SIZE + 511 % TILES + 2;
+    constexpr int END_Y = 511 / TILES * TILE_SIZE + 511 / TILES + 2;
+    DrawRectangle(BASE, BASE, BASE + END_X, BASE + END_Y, BLACK);
     for (int nCurrentTile = 0; nCurrentTile < 512; nCurrentTile++) {
-        for (int i = 0; i < 8; i++) {
-            int chrLo, chrHi;
-            chrLo = (unsigned char)rom->chr[(nCurrentTile * 16) + i];
-            chrHi = (unsigned char)rom->chr[(nCurrentTile * 16) + i + 8];
-            bank.tiles[nCurrentTile].data[i][7] = (((chrLo & 0x01) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x01) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][6] = (((chrLo & 0x02) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x02) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][5] = (((chrLo & 0x04) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x04) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][4] = (((chrLo & 0x08) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x08) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][3] = (((chrLo & 0x10) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x10) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][2] = (((chrLo & 0x20) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x20) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][1] = (((chrLo & 0x40) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x40) > 0) ? (uint8_t)2 : 0);
-            bank.tiles[nCurrentTile].data[i][0] = (((chrLo & 0x80) > 0) ? (uint8_t)1 : 0) + (((chrHi & 0x80) > 0) ? (uint8_t)2 : 0);
-            _DEBUG_LOG("%3d - 0x%02X 0x%02X: %d,%d,%d,%d,%d,%d,%d,%d\n", nCurrentTile, chrLo, chrHi, bank.tiles[nCurrentTile].data[i][0],
-                       bank.tiles[nCurrentTile].data[i][1], bank.tiles[nCurrentTile].data[i][2], bank.tiles[nCurrentTile].data[i][3],
-                       bank.tiles[nCurrentTile].data[i][4], bank.tiles[nCurrentTile].data[i][5], bank.tiles[nCurrentTile].data[i][6],
-                       bank.tiles[nCurrentTile].data[i][7]);
-        }
-        draw_tile(&bank, nCurrentTile);
-        _DEBUG_LOG("\n");
+        const int space_x = nCurrentTile % TILES + 1;
+        const int space_y = nCurrentTile / TILES + 1;
+        const int x = (nCurrentTile % TILES) * TILE_SIZE;
+        const int y = (nCurrentTile / TILES) * TILE_SIZE;
+        draw_tile(&bank.tiles[nCurrentTile], BASE + space_x + x, BASE + space_y + y, SCALE);
     }
+    EndDrawing();
 
-    _DEBUG_LOG("%d, %d\n\n", TILE_H * TILE_S, TILE_V * TILE_S);
-
-    SDL_SetRenderTarget(bank.renderer, NULL);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-    bool quit = 0;
-    while (!quit) {
-        SDL_Event event = {0};
-        while (SDL_PollEvent(&event)) {
-            switch (event.type) {
-                case SDL_QUIT: {
-                    quit = 1;
-                } break;
-            }
-        }
-
-        SDL_SetRenderDrawColor(renderer, 150, 150, 150, 0xFF);
-        SDL_RenderClear(renderer);
-        SDL_Rect src = {0, 0, TILE_H * TILE_S, TILE_V * TILE_S};
-        SDL_Rect dst = {50, 50, TILE_H * TILE_S * 4, TILE_V * TILE_S * 4};
-        SDL_RenderCopy(renderer, bank.texture, &src, &dst);
-
-        SDL_RenderPresent(renderer);
+    while (!WindowShouldClose()) {
+        BeginDrawing();
+        EndDrawing();
     }
-
-    SDL_Quit();
+    CloseWindow();
 
     unload_rom(rom);
 
