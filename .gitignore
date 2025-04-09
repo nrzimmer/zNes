@@ -1,4 +1,11 @@
 rom
 xtra
 znes
-old
+old/old
+cmake-build-debug
+.idea
+*.log
+*.nes
+log.txt
+nestest.fdb
+/cmake-build-release/
