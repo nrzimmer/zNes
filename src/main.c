@@ -1,5 +1,7 @@
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bus.h"
@@ -22,6 +24,74 @@ const char *FONT_NAME = "/usr/share/fonts/Adwaita/AdwaitaMono-Bold.ttf";
 constexpr Color BG_BLUE = {0x00, 0x00, 0x66, 0xFF};
 
 disasm *array_asm;
+Bus *main_bus;
+
+bool handle_ui_input(int *scale, int *window_width, int *window_height, Cartridge **cart, int *debugger_x, int *pattern_y, int *nametable_y,
+                     bool resize, bool *emulate) {
+    if (IsKeyPressed(KEY_KP_ADD)) {
+        if (*scale < 4) {
+            (*scale)++;
+            resize = true;
+        }
+    }
+
+    if (IsKeyPressed(KEY_KP_SUBTRACT)) {
+        if (*scale > 1) {
+            (*scale)--;
+            resize = true;
+        }
+    }
+
+    if (resize) {
+        resize = false;
+        *window_width = 256 * (*scale + 1) + 12;
+        *window_height = 240 * *scale;
+        *debugger_x = 256 * *scale + 4;
+        if (*scale == 1) {
+            *pattern_y = 72;
+        } else {
+            *pattern_y = 340;
+        }
+        *nametable_y = *pattern_y + 12;
+
+        SetWindowSize(*window_width, *window_height);
+    }
+
+    if (IsKeyPressed(KEY_P))
+        *emulate = !*emulate;
+
+    if (IsKeyPressed(KEY_R)) {
+        bus_reset();
+
+        // Clean pressed keys
+        BeginDrawing();
+        EndDrawing();
+        return true;
+    }
+
+    return false;
+}
+
+void update_controller_input(Bus *bus) {
+    bus->controller[0] = 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_X) | IsKeyDown(KEY_S) ? 0x80 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_Z) | IsKeyDown(KEY_A) ? 0x40 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_N) ? 0x20 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_M) ? 0x10 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_UP) ? 0x08 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_DOWN) ? 0x04 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_LEFT) ? 0x02 : 0x00;
+    bus->controller[0] |= IsKeyDown(KEY_RIGHT) ? 0x01 : 0x00;
+}
+
+void AudioInputCallback(void *buffer, unsigned int frames) {
+    short *d = buffer;
+    for (unsigned int i = 0; i < frames; i++) {
+        while (!bus_clock()) {
+        }
+        d[i] = (short)main_bus->dAudioSample;
+    }
+}
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -29,11 +99,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // char *rom_file = argv[1];
+    char *rom_file = argv[1];
     // rom_file = "nestest.nes";
-    int rom_index = 0;
-    char *roms[3] = {"smb.nes", "dk.nes", "nestest.nes"};
-    // printf("%s\n", rom_file);
 
     int scale = 3;
 
@@ -50,188 +117,75 @@ int main(int argc, char **argv) {
     font = LoadFont(FONT_NAME);
     SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
 
-    Bus *bus = bus_new();
-    Cartridge *cart = cartridge_new(roms[rom_index]);
+    main_bus = bus_new();
+    Cartridge *cart = cartridge_new(rom_file);
     set_cart(cart);
-    array_asm = disassemble(bus, 0x0000, 0xFFFF);
+    array_asm = disassemble(main_bus, 0x0000, 0xFFFF);
     bus_reset();
 
-    int debugger_x;
+    int debugger_x = 256 * scale + 4;
     int pattern_y;
     int nametable_y;
 
     bool resize = true;
-    bool emulate = false;
+    bool emulate = true;
 
     SetTargetFPS(60);
+    SetSampleFrequency(44100);
+
+    InitAudioDevice();
+    SetAudioStreamBufferSizeDefault(512);
+    AudioStream stream = LoadAudioStream(44100, 16, 1);
+    SetAudioStreamCallback(stream, AudioInputCallback);
+    PlayAudioStream(stream);
 
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_KP_ADD)) {
-            if (scale < 4) {
-                scale++;
-                resize = true;
-            }
-        }
+        if (handle_ui_input(&scale, &window_width, &window_height, &cart, &debugger_x, &pattern_y, &nametable_y, resize, &emulate))
+            continue;
 
-        if (IsKeyPressed(KEY_KP_SUBTRACT)) {
+        update_controller_input(main_bus);
+
+        if (main_bus->ppu->frame_complete) {
+            main_bus->ppu->frame_complete = false;
+            raylib_render_pattern_table(0, 0);
+            raylib_render_pattern_table(1, 0);
+            gen_screen_texture();
+
+            BeginDrawing();
+            ClearBackground(BG_BLUE);
+
+            draw_cpu(main_bus, debugger_x, 2);
             if (scale > 1) {
-                scale--;
-                resize = true;
+                draw_code(main_bus, debugger_x, 72, 24);
+                // draw_sprite_info(bus, debugger_x, 72);
             }
-        }
 
-        if (IsKeyPressed(KEY_T)) {
-            rom_index = (rom_index + 1) % 3;
-            cart = cartridge_new(roms[rom_index]);
-            set_cart(cart);
-            bus_reset();
-            BeginDrawing();
+            const int nSwatchSize = 6;
+            for (int p = 0; p < 8; p++)
+                for (int s = 0; s < 4; s++)
+                    DrawRectangle(debugger_x + p * (nSwatchSize * 5) + s * nSwatchSize, pattern_y, nSwatchSize, nSwatchSize,
+                                  get_color_from_palette_ram(p, s));
+
+            DrawTexture(main_bus->ppu->texture_pattern[0].texture, debugger_x, nametable_y, WHITE);
+            DrawTexture(main_bus->ppu->texture_pattern[1].texture, debugger_x + 132, nametable_y, WHITE);
+
+            // DrawRam(bus, 0, 0, 0x0000, 16, 16);
+            DrawTextureEx(main_bus->ppu->texture_screen.texture, (Vector2){0, 0}, 0, scale, WHITE);
+            // DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 20, DARKGRAY);
+
             EndDrawing();
-            emulate = true;
-            continue;
         }
-
-        if (resize) {
-            resize = false;
-            window_width = 256 * (scale + 1) + 12;
-            window_height = 240 * scale;
-            debugger_x = 256 * scale + 4;
-            if (scale == 1) {
-                pattern_y = 72;
-            } else {
-                pattern_y = 340;
-            }
-            nametable_y = pattern_y + 12;
-
-            SetWindowSize(window_width, window_height);
-        }
-
-        bus->controller[0] = 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_X) | IsKeyDown(KEY_S) ? 0x80 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_Z) | IsKeyDown(KEY_A) ? 0x40 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_N) ? 0x20 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_M) ? 0x10 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_UP) ? 0x08 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_DOWN) ? 0x04 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_LEFT) ? 0x02 : 0x00;
-        bus->controller[0] |= IsKeyDown(KEY_RIGHT) ? 0x01 : 0x00;
-
-        BeginTextureMode(bus->ppu->texture_screen);
-        uint16_t pc = 0;
-        if (emulate) {
-            do {
-                if (pc != bus->cpu->pc) {
-                    pc = bus->cpu->pc;
-                    // Log asm instruction to stdout
-                    // disasm_addr(bus, pc);
-                }
-                bus_clock();
-            } while (!bus->ppu->frame_complete);
-            do {
-                bus_clock();
-
-            } while (bus->cpu->cycles != 0);
-            bus->ppu->frame_complete = false;
-            do {
-                bus_clock();
-            } while (bus->cpu->cycles == 0);
-        } else {
-            if (IsKeyPressed(KEY_C)) {
-                // Run one full instruction
-                do {
-                    bus_clock();
-                } while (bus->cpu->cycles != 0);
-                // Reset frame flag
-                bus->ppu->frame_complete = false;
-            }
-
-            if (IsKeyPressed(KEY_F)) {
-                // Emulate a single frame
-                do {
-                    bus_clock();
-                } while (!bus->ppu->frame_complete);
-                // End current instruction
-                do {
-                    bus_clock();
-                } while (bus->cpu->cycles != 0);
-                bus->ppu->frame_complete = false;
-            }
-        }
-        EndTextureMode();
-
-        if (IsKeyPressed(KEY_P))
-            emulate = !emulate;
-
-        if (IsKeyPressed(KEY_R)) {
-            bus_reset();
-
-            // Clean pressed keys
-            BeginDrawing();
-            EndDrawing();
-            continue;
-        }
-
-        // Render Pattern Tables
-        raylib_render_pattern_table(0, 0);
-        raylib_render_pattern_table(1, 0);
-
-        BeginDrawing();
-        ClearBackground(BG_BLUE);
-
-        draw_cpu(bus, debugger_x, 2);
-        if (scale > 1) {
-            // DrawCode(bus, debugger_x, 72, 24);
-            draw_sprite_info(bus, debugger_x, 72);
-        }
-
-        // Draw Palettes & Pattern Tables
-        const int nSwatchSize = 6;
-        for (int p = 0; p < 8; p++)     // For each palette
-            for (int s = 0; s < 4; s++) // For each index
-                DrawRectangle(debugger_x + p * (nSwatchSize * 5) + s * nSwatchSize, pattern_y, nSwatchSize, nSwatchSize,
-                              get_color_from_palette_ram(p, s));
-
-        // Draw Selected Palette
-        // TODO - first the palettes need to ne populated
-
-        // Draw pattern tables status
-        DrawTexture(bus->ppu->texture_pattern[0].texture, debugger_x, nametable_y, WHITE);
-        DrawTexture(bus->ppu->texture_pattern[1].texture, debugger_x + 132, nametable_y, WHITE);
-
-        // DrawRam(bus, 0, 0, 0x0000, 16, 16);
-
-        // Draw nametable
-        // char buff[32];
-        // for (uint8_t y = 0; y < 30; y++)
-        //     for (uint8_t x = 0; x < 32; x++) {
-        //         sprintf(buff, "%02X", bus->ppu->tblName[0][y*32+x]);
-        //         DrawString(buff,x*22,y*22,16, WHITE);
-        //     }
-
-        // Draw rendered Frame
-        DrawTextureEx(bus->ppu->texture_screen.texture, (Vector2){0, 0}, 0, scale, WHITE);
-
-        // Display the FPS on the screen
-        // DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 20, DARKGRAY);
-
-        EndDrawing();
     }
-    CloseWindow();
+    BeginDrawing();
+    EndDrawing();
 
-    // Print ram
-    // uint16_t nAddr = 0;
-    // char sOffset[1024];
-    // for (int row = 0; row < 16; row++) {
-    //     sprintf(sOffset, "$%04X", nAddr);
-    //     for (int col = 0; col < 16; col++) {
-    //         char temp[1024];
-    //         sprintf(temp, "%s %02X", sOffset, bus->read(nAddr));
-    //         nAddr += 1;
-    //         strcpy(sOffset, temp);
-    //     }
-    //     printf(sOffset);
-    //     printf("\n");
-    // }
+    StopAudioStream(stream);
+    UnloadAudioStream(stream);
+    CloseAudioDevice();
+
+    UnloadFont(font);
+
+    CloseWindow();
 
     bus_free();
 

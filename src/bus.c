@@ -1,6 +1,8 @@
 #include <stdlib.h>
 
 #include "bus.h"
+
+#include "apu.h"
 #include "cartridge.h"
 #include "cpu.h"
 #include "ppu.h"
@@ -14,6 +16,7 @@ Bus *bus_new() {
     bus = calloc(1, sizeof(Bus));
     bus->cpu = cpu_new(bus);
     bus->ppu = ppu_new();
+    bus->apu = apu_new();
     bus->read = &bus_read;
     bus->write = &bus_write;
     bus->clock_count = 0;
@@ -38,6 +41,8 @@ uint8_t bus_read(const uint16_t addr) {
         data = bus->ram[addr & 0x07FF];
     } else if (addr >= 0x2000 && addr <= 0x3FFF) {
         data = bus->ppu->read(addr & 0x0007);
+    } else if (addr == 0x4015) {
+        data = bus->apu->read(addr);
     } else if (addr >= 0x4016 && addr <= 0x4017) {
         data = (bus->controller_cache[addr & 0x0001] & 0x80) > 0;
         bus->controller_cache[addr & 0x0001] <<= 1;
@@ -57,6 +62,9 @@ void bus_write(const uint16_t addr, const uint8_t data) {
         bus->dma_page = data;
         bus->dma_addr = 0x00;
         bus->dma_transfer_active = true;
+    } else if ((addr >= 0x4000 && addr <= 0x4013) || addr == 0x4015 || addr == 0x4017) //  NES APU
+    {
+        bus->apu->write(addr, data);
     } else if (addr >= 0x4016 && addr <= 0x4017) {
         bus->controller_cache[addr & 0x0001] = bus->controller[addr & 0x0001];
     } else if (addr >= 0x8000) {
@@ -80,7 +88,18 @@ void bus_reset() {
     bus->dma_transfer_active = false;
 }
 
-void bus_clock() {
+double dAudioTime = 0.0;
+// double dAudioGlobalTime = 0.0;
+double dAudioTimePerNESClock = 0.0;
+double dAudioTimePerSystemSample = 0.0f;
+
+void SetSampleFrequency(uint32_t sample_rate) {
+    dAudioTimePerSystemSample = 1.0 / (double)sample_rate;
+    dAudioTimePerNESClock = 1.0 / 5369318.0; // PPU Clock Frequency
+}
+
+bool bus_clock() {
+    apu_clock();
     ppu_clock();
     if (bus->clock_count % 3 == 0) {
         if (bus->dma_transfer_active) {
@@ -104,10 +123,21 @@ void bus_clock() {
             cpu_clock();
         }
     }
+
+    bool bAudioSampleReady = false;
+    dAudioTime += dAudioTimePerNESClock;
+    if (dAudioTime >= dAudioTimePerSystemSample) {
+        dAudioTime -= dAudioTimePerSystemSample;
+        bus->dAudioSample = get_sample();
+        bAudioSampleReady = true;
+    }
+
     if (bus->ppu->nmi) {
         bus->ppu->nmi = false;
         cpu_nmi();
     }
 
     bus->clock_count++;
+
+    return bAudioSampleReady;
 }

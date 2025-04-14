@@ -71,6 +71,7 @@ struct PPU {
     uint8_t *OAM_pointer;
 
     RenderTexture2D texture_screen;
+    uint8_t screen_buffer[256][240];
     RenderTexture2D texture_nametable[2];
     RenderTexture2D texture_pattern[2];
 };
@@ -85,5 +86,8 @@ void raylib_render_pattern_table(uint8_t i, uint8_t palette);
 void ppu_clock(void);
 void ppu_reset(void);
 
+void gen_screen_texture(void);
+
 Color get_color_from_palette_ram(uint8_t palette, uint8_t pixel);
+Color get_color_from_palette_ram_by_index(const uint8_t index);
 #endif // PPU_H

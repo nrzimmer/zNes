@@ -8,9 +8,10 @@
 struct Bus {
     Cpu *cpu;
     PPU *ppu;
+    APU *apu;
     Cartridge *cart;
-    uint8_t (*read)(const uint16_t addr);
-    void (*write)(const uint16_t addr, const uint8_t data);
+    uint8_t (*read)(uint16_t addr);
+    void (*write)(uint16_t addr, uint8_t data);
     uint32_t clock_count;
     uint8_t ram[2 * 1024];
     uint8_t controller[2];
@@ -20,13 +21,16 @@ struct Bus {
     uint8_t dma_data;
     bool dma_odd_cycle;
     bool dma_transfer_active;
+    double dAudioSample;
 };
 
 Bus *bus_new();
 void bus_free();
 
-void bus_insert_cartridge(Cartridge *cart);
+void set_cart(Cartridge *cart);
 void bus_reset();
-void bus_clock();
+
+void SetSampleFrequency(uint32_t sample_rate);
+bool bus_clock();
 
 #endif // BUS_H

@@ -6,6 +6,8 @@
 #include "cartridge.h"
 #include "ppu.h"
 
+#include <stdio.h>
+
 #define BIT_7 (1 << 7)
 #define BIT_6 (1 << 6)
 #define BIT_5 (1 << 5)
@@ -172,10 +174,28 @@ void shift(void) {
     }
 }
 
+inline void gen_screen_texture(void) {
+    BeginTextureMode(ppu->texture_screen);
+    for (int i = 0; i < 256; i++)
+        for (int j = 0; j < 240; j++)
+            DrawPixel(i, (240 - j), get_color_from_palette_ram_by_index(ppu->screen_buffer[i][j]));
+    EndTextureMode();
+}
+
 Color get_color_from_palette_ram(const uint8_t palette, const uint8_t pixel) {
-    const uint16_t index = ppu_read(0x3F00 + (palette << 2) + pixel) & 0x3F;
+    const uint8_t index = ppu_read(0x3F00 + (palette << 2) + pixel) & 0x3F;
     const Color color = NTSC[index];
     return color;
+}
+
+Color get_color_from_palette_ram_by_index(const uint8_t index) {
+    const Color color = NTSC[index];
+    return color;
+}
+
+uint8_t get_color_index_from_palette_ram(const uint8_t palette, const uint8_t pixel) {
+    const uint8_t index = ppu_read(0x3F00 + (palette << 2) + pixel) & 0x3F;
+    return index;
 }
 
 uint8_t flip(uint8_t byte) {
@@ -422,10 +442,11 @@ void ppu_clock(void) {
         }
     }
 
-    if (ppu->scanline >= 0) {
-        const Color color = get_color_from_palette_ram(palette, pixel);
-        const int posY = (255 - ppu->scanline); // RayLib
-        DrawPixel(ppu->cycle - 1, posY, color);
+    if (ppu->scanline >= 0 && ppu->scanline < 240 && ppu->cycle >= 0 && ppu->cycle < 256) {
+        // const Color color = get_color_from_palette_ram(palette, pixel);
+        // const int posY = (255 - ppu->scanline); // RayLib
+        // DrawPixel(ppu->cycle - 1, posY, color);
+        ppu->screen_buffer[ppu->cycle][ppu->scanline] = get_color_index_from_palette_ram(palette, pixel);
     }
 
     ppu->cycle++;
