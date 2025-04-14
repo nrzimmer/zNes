@@ -3,6 +3,8 @@
 #define APU_IMPLEMENTATION
 #include "apu.h"
 
+#include <tgmath.h>
+
 uint8_t length_table[32] = {10, 254, 20, 2,  40, 4,  80, 6,  160, 8,  60, 10, 14, 12, 26, 14,
                             12, 16,  24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30};
 
@@ -362,35 +364,48 @@ void env_clock(Env *ev, bool bLoop) {
     }
 }
 
-double fast_sin(double t) {
-    double j = t * 0.15915;
-    j = j - (int)j;
-    return 20.785 * j * (j - 0.5) * (j - 1.0);
-}
+// IA generated
+// Define a wavetable approach specifically for NES emulation
+#define WAVE_TABLE_SIZE 32 // NES pulse channel had 32 steps per cycle
+
+// Precomputed pulse waveforms with different duty cycles
+static const double pulse_waves[4][WAVE_TABLE_SIZE] = {
+    // 12.5% duty cycle (1/8)
+    {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+
+    // 25% duty cycle (1/4)
+    {1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+
+    // 50% duty cycle (1/2)
+    {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+     0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+
+    // 75% duty cycle (3/4)
+    {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
 
 double osc_clock(Osc *op, double t) {
-    static const double pi = 3.14159265358979323846;
-    static const double two_pi = 2.0 * pi;
-    static const double two_over_pi = 2.0 / pi;
+    // Calculate the position in the waveform
+    double position = fmod(t * op->frequency, 1.0) * WAVE_TABLE_SIZE;
+    int index = (int)position;
 
-    const double frequency_two_pi = op->frequency * two_pi;
-    const double p = op->dutycycle * two_pi;
-    const int harmonics = (int)op->harmonics; // Convert to integer for loop
+    // Convert duty cycle to one of the 4 NES duty cycles (0=12.5%, 1=25%, 2=50%, 3=75%)
+    int duty_type;
+    if (op->dutycycle <= 0.125)
+        duty_type = 0; // 12.5%
+    else if (op->dutycycle <= 0.25)
+        duty_type = 1; // 25%
+    else if (op->dutycycle <= 0.5)
+        duty_type = 2; // 50%
+    else
+        duty_type = 3; // 75%
 
-    double a = 0.0;
-    double b = 0.0;
-
-    for (int n = 1; n < harmonics; n++) {
-        const double n_float = (double)n;
-        const double c = n_float * frequency_two_pi * t;
-        const double inv_n = 1.0 / n_float;
-
-        const double sin_c = fast_sin(c);
-        a += -sin_c * inv_n;
-        b += -fast_sin(c - p * n_float) * inv_n;
-    }
-    return two_over_pi * op->amplitude * (a - b);
+    // Simply look up the value in our waveform table
+    return pulse_waves[duty_type][index] * op->amplitude;
 }
+// End of IA generated
 
 void sweep_track(Sweep *sw, const uint16_t *target) {
     if (sw->enabled) {
