@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
 
     Bus *bus = bus_new();
     Cartridge *cart = cartridge_new(roms[rom_index]);
-    bus_insert_cartridge(cart);
+    set_cart(cart);
     array_asm = disassemble(bus, 0x0000, 0xFFFF);
     bus_reset();
 
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_T)) {
             rom_index = (rom_index + 1) % 3;
             cart = cartridge_new(roms[rom_index]);
-            bus_insert_cartridge(cart);
+            set_cart(cart);
             bus_reset();
             BeginDrawing();
             EndDrawing();

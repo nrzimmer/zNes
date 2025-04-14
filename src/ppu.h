@@ -75,7 +75,7 @@ struct PPU {
     RenderTexture2D texture_pattern[2];
 };
 
-PPU *ppu_new(Cartridge *cart);
+PPU *ppu_new();
 void ppu_free(void);
 
 Color *get_color_by_index(uint8_t index);

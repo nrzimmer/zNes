@@ -59,9 +59,9 @@ Color NTSC[0x40] = {
     {236, 180, 176, 255}, {228, 196, 144, 255}, {204, 210, 120, 255}, {180, 222, 120, 255}, {168, 226, 144, 255}, {152, 226, 180, 255},
     {160, 214, 228, 255}, {160, 162, 160, 255}, {0, 0, 0, 255},       {0, 0, 0, 255}};
 
-PPU *ppu_new(Cartridge *cart) {
+PPU *ppu_new() {
     ppu = calloc(1, sizeof(PPU));
-    ppu->cart = cart;
+    ppu->cart = nullptr;
     ppu->read = &ppu_cpu_read;
     ppu->write = &ppu_cpu_write;
     ppu_reset();

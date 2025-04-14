@@ -13,7 +13,7 @@ Bus *bus;
 Bus *bus_new() {
     bus = calloc(1, sizeof(Bus));
     bus->cpu = cpu_new(bus);
-    bus->ppu = nullptr;
+    bus->ppu = ppu_new();
     bus->read = &bus_read;
     bus->write = &bus_write;
     bus->clock_count = 0;
@@ -64,13 +64,12 @@ void bus_write(const uint16_t addr, const uint8_t data) {
     }
 }
 
-void bus_insert_cartridge(Cartridge *cart) {
+void set_cart(Cartridge *cart) {
     bus->cart = cart;
-    bus->ppu = ppu_new(cart);
+    bus->ppu->cart = cart;
 }
 
 void bus_reset() {
-    // cart_reset(bus->cart)
     cpu_reset();
     ppu_reset();
     bus->clock_count = 0;
@@ -85,28 +84,16 @@ void bus_clock() {
     ppu_clock();
     if (bus->clock_count % 3 == 0) {
         if (bus->dma_transfer_active) {
-            // ...Yes! We need to wait until the next even CPU clock cycle
-            // before it starts...
             if (bus->dma_odd_cycle) {
-                // ...So hang around in here each clock until 1 or 2 cycles
-                // have elapsed...
                 if (bus->clock_count % 2 == 1) {
-                    // ...and finally allow DMA to start
                     bus->dma_odd_cycle = false;
                 }
             } else {
-                // DMA can take place!
                 if (bus->clock_count % 2 == 0) {
-                    // On even clock cycles, read from CPU bus
                     bus->dma_data = bus->read(bus->dma_page << 8 | bus->dma_addr);
                 } else {
-                    // On odd clock cycles, write to PPU OAM
                     bus->ppu->OAM_pointer[bus->dma_addr] = bus->dma_data;
-                    // Increment the lo byte of the address
                     bus->dma_addr++;
-                    // If this wraps around, we know that 256
-                    // bytes have been written, so end the DMA
-                    // transfer, and proceed as normal
                     if (bus->dma_addr == 0x00) {
                         bus->dma_transfer_active = false;
                         bus->dma_odd_cycle = true;
@@ -114,9 +101,6 @@ void bus_clock() {
                 }
             }
         } else {
-            // No DMA happening, the CPU is in control of its
-            // own destiny. Go forth my friend and calculate
-            // awesomeness for many generations to come...
             cpu_clock();
         }
     }
