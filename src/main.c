@@ -100,7 +100,11 @@ int main(int argc, char **argv) {
     }
 
     char *rom_file = argv[1];
-    // rom_file = "nestest.nes";
+
+    Cartridge *cart = cartridge_new(rom_file);
+    if (cart == nullptr) {
+        exit(1);
+    }
 
     int scale = 3;
 
@@ -118,7 +122,6 @@ int main(int argc, char **argv) {
     SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
 
     main_bus = bus_new();
-    Cartridge *cart = cartridge_new(rom_file);
     set_cart(cart);
     array_asm = disassemble(main_bus, 0x0000, 0xFFFF);
     bus_reset();

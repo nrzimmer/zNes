@@ -7,8 +7,10 @@
 
 typedef struct Mapper {
     CartridgeInfo *info;
-    uint32_t (*cpu)(uint16_t addr);
-    uint32_t (*ppu)(uint16_t addr);
+    bool (*cpu_read)(uint16_t addr, uint32_t *mapped_addr, uint8_t *value);
+    bool (*cpu_write)(uint16_t addr, uint32_t *mapped_addr, uint8_t value);
+    bool (*ppu_read)(uint16_t addr, uint32_t *mapped_addr, uint8_t *value);
+    bool (*ppu_write)(uint16_t addr, uint32_t *mapped_addr, uint8_t value);
 } Mapper;
 
 void mapper_free(Mapper *map);

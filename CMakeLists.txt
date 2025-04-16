@@ -26,6 +26,8 @@ add_executable(znes src/main.c
         src/forward.h
         src/apu.c
         src/apu.h
+        src/mappers/mapper_002.c
+        src/mappers/mapper_002.h
 )
 
 target_link_libraries(znes PRIVATE raylib ${MATH_LIBRARY})

@@ -3,16 +3,38 @@
 #include "cartridge.h"
 #include "mapper_000.h"
 
-Mapper *map;
+#include "cpu.h"
 
-uint32_t cpu_map_000(const uint16_t addr) { return addr & (map->info->prg_rom_pages > 1 ? 0x7FFF : 0x3FFF); }
+Mapper *map000;
+
+bool cpu_read_000(const uint16_t addr, uint32_t *mapped_addr, uint8_t *value) {
+    *mapped_addr = addr & (map000->info->prg_rom_pages > 1 ? 0x7FFF : 0x3FFF);
+    return false;
+}
+
+bool cpu_write_000(const uint16_t addr, uint32_t *mapped_addr, uint8_t value) {
+    *mapped_addr = addr & (map000->info->prg_rom_pages > 1 ? 0x7FFF : 0x3FFF);
+    return false;
+}
+
+bool ppu_read_000(const uint16_t addr, uint32_t *mapped_addr, uint8_t *value) {
+    *mapped_addr = addr;
+    return false;
+}
+
+bool ppu_write_000(const uint16_t addr, uint32_t *mapped_addr, uint8_t value) {
+    *mapped_addr = addr;
+    return false;
+}
 
 uint32_t ppu_map_000(const uint16_t addr) { return addr; }
 
 Mapper *new_mapper_000(CartridgeInfo *info) {
-    map = calloc(1, sizeof(Mapper));
-    map->info = info;
-    map->cpu = &cpu_map_000;
-    map->ppu = &ppu_map_000;
-    return map;
+    map000 = calloc(1, sizeof(Mapper));
+    map000->info = info;
+    map000->cpu_read = &cpu_read_000;
+    map000->cpu_write = &cpu_write_000;
+    map000->ppu_read = &ppu_read_000;
+    map000->ppu_write = &ppu_write_000;
+    return map000;
 }

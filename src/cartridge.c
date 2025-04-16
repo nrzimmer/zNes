@@ -3,6 +3,7 @@
 
 #include "cartridge.h"
 #include "mappers/mapper_000.h"
+#include "mappers/mapper_002.h"
 
 uint8_t cart_cpu_read(uint16_t addr);
 void cart_cpu_write(uint16_t addr, uint8_t data);
@@ -59,27 +60,33 @@ Cartridge *cartridge_new(const char *path) {
         const bool playchoice = is_bit_set(header[7], 1);
         const bool nes2_header = is_bit_set(header[7], 2);
         */
+        fprintf(stderr, "Not implemented support for iNes Header v0.\n");
+        return nullptr;
     }
 
     if (ines_version == 1) {
         info->prg_rom_pages = header.prg_rom_pages;
         info->prg_rom_size = header.prg_rom_pages * 16 * 1024;
         cart->pgr = calloc(1, info->prg_rom_size);
-        if (fread(cart->pgr, info->prg_rom_size, 1, rom_file) != 1) {
-            fprintf(stderr, "Failed to read rom PRG data.\n");
+        uint32_t read = fread(cart->pgr, 1, info->prg_rom_size, rom_file);
+        if (read != info->prg_rom_size) {
+            fprintf(stderr, "Failed to read rom PGR data.\n Expected %d bytes but only got %d bytes.\n", info->prg_rom_size, read);
             return nullptr;
         }
 
         info->chr_rom_pages = header.chr_rom_pages;
         info->chr_rom_size = header.chr_rom_pages * 8 * 1024;
         cart->chr = calloc(1, info->chr_rom_size);
-        if (fread(cart->chr, info->chr_rom_size, 1, rom_file) != 1) {
-            fprintf(stderr, "Failed to read rom CHR data.\n");
+        read = fread(cart->chr, 1, info->chr_rom_size, rom_file);
+        if (read != info->chr_rom_size) {
+            fprintf(stderr, "Failed to read rom CHR data.\n Expected %d bytes but only got %d bytes.\n", info->chr_rom_size, read);
             return nullptr;
         }
     }
 
     if (ines_version == 2) {
+        fprintf(stderr, "Not implemented support for iNes Header v2.\n");
+        return nullptr;
     }
 
     fgetc(rom_file);
@@ -92,9 +99,12 @@ Cartridge *cartridge_new(const char *path) {
     switch (info->mapper) {
         case 0:
             cart->mapper = new_mapper_000(info);
+        case 2:
+            cart->mapper = new_mapper_002(info);
             break;
         default:
-            cart->mapper = nullptr;
+            fprintf(stderr, "Mapper %d not implemented yet.\n", info->mapper);
+            return nullptr;
     }
 
     cart->cpu_read = &cart_cpu_read;
@@ -112,21 +122,35 @@ void cartridge_free(Cartridge *cart) {
 }
 
 uint8_t cart_cpu_read(const uint16_t addr) {
-    uint32_t mapped_addr = cart->mapper->cpu(addr);
+    uint32_t mapped_addr;
+    uint8_t value;
+    if (cart->mapper->cpu_read(addr, &mapped_addr, &value)) {
+        return value;
+    }
     return cart->pgr[mapped_addr];
 }
 
 void cart_cpu_write(const uint16_t addr, const uint8_t data) {
-    uint32_t mapped_addr = cart->mapper->cpu(addr);
+    uint32_t mapped_addr;
+    if (cart->mapper->cpu_write(addr, &mapped_addr, data)) {
+        return;
+    }
     cart->pgr[mapped_addr] = data;
 }
 
 uint8_t cart_ppu_read(const uint16_t addr) {
-    uint32_t mapped_addr = cart->mapper->cpu(addr);
+    uint32_t mapped_addr;
+    uint8_t value;
+    if (cart->mapper->ppu_read(addr, &mapped_addr, &value)) {
+        return value;
+    }
     return cart->chr[mapped_addr];
 }
 
 void cart_ppu_write(const uint16_t addr, const uint8_t data) {
-    uint32_t mapped_addr = cart->mapper->cpu(addr);
+    uint32_t mapped_addr;
+    if (cart->mapper->ppu_write(addr, &mapped_addr, data)) {
+        return;
+    }
     cart->chr[mapped_addr] = data;
 }
