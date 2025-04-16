@@ -9,6 +9,7 @@
 #include "cpu.h"
 #include "ppu.h"
 #include "raylib.h"
+#include "ringbuffer.h"
 
 Font font;
 
@@ -84,12 +85,14 @@ void update_controller_input(Bus *bus) {
     bus->controller[0] |= IsKeyDown(KEY_RIGHT) ? 0x01 : 0x00;
 }
 
+RingBuffer *audio_buffer;
+
 void AudioInputCallback(void *buffer, unsigned int frames) {
     short *d = buffer;
-    for (unsigned int i = 0; i < frames; i++) {
-        while (!bus_clock()) {
-        }
-        d[i] = (short)main_bus->dAudioSample;
+    short data = 0;
+    for (int i = 0; i < frames; i++) {
+        ring_buffer_get(audio_buffer, &data);
+        d[i] = data;
     }
 }
 
@@ -136,13 +139,18 @@ int main(int argc, char **argv) {
     SetTargetFPS(60);
     SetSampleFrequency(44100);
 
+    audio_buffer = ring_buffer_init(24 * 1024 * sizeof(short));
     InitAudioDevice();
-    SetAudioStreamBufferSizeDefault(512);
     AudioStream stream = LoadAudioStream(44100, 16, 1);
     SetAudioStreamCallback(stream, AudioInputCallback);
     PlayAudioStream(stream);
-
     while (!WindowShouldClose()) {
+        while (!main_bus->ppu->frame_complete) {
+            while (!bus_clock()) {
+            }
+            ring_buffer_put(audio_buffer, (short)main_bus->dAudioSample);
+        }
+
         if (handle_ui_input(&scale, &window_width, &window_height, &cart, &debugger_x, &pattern_y, &nametable_y, resize, &emulate))
             continue;
 
@@ -160,7 +168,7 @@ int main(int argc, char **argv) {
             draw_cpu(main_bus, debugger_x, 2);
             if (scale > 1) {
                 draw_code(main_bus, debugger_x, 72, 24);
-                // draw_sprite_info(bus, debugger_x, 72);
+                //  draw_sprite_info(bus, debugger_x, 72);
             }
 
             const int nSwatchSize = 6;
@@ -179,19 +187,17 @@ int main(int argc, char **argv) {
             EndDrawing();
         }
     }
-    BeginDrawing();
-    EndDrawing();
-
-    StopAudioStream(stream);
-    UnloadAudioStream(stream);
-    CloseAudioDevice();
-
-    UnloadFont(font);
-
-    CloseWindow();
 
     bus_free();
+    StopAudioStream(stream);
+    while (IsAudioStreamPlaying(stream)) {
+    }
+    UnloadAudioStream(stream);
+    CloseAudioDevice();
+    ring_buffer_free(audio_buffer);
 
+    UnloadFont(font);
+    CloseWindow();
     return 0;
 }
 

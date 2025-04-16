@@ -10,14 +10,12 @@ Mapper *map002;
 uint8_t map002_bank_select = 0x00;
 
 bool cpu_read_002(const uint16_t addr, uint32_t *mapped_addr, uint8_t *value) {
-    if (addr >= 0x8000 && addr <= 0xBFFF)
-    {
+    if (addr >= 0x8000 && addr <= 0xBFFF) {
         *mapped_addr = map002_bank_select * 0x4000 + (addr & 0x3FFF);
         return false;
     }
 
-    if (addr >= 0xC000 && addr <= 0xFFFF)
-    {
+    if (addr >= 0xC000 && addr <= 0xFFFF) {
         *mapped_addr = (map002->info->prg_rom_pages - 1) * 0x4000 + (addr & 0x3FFF);
         return false;
     }

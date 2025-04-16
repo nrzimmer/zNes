@@ -76,6 +76,11 @@ PPU *ppu_new() {
 }
 
 void ppu_free(void) {
+    UnloadRenderTexture(ppu->texture_screen);
+    UnloadRenderTexture(ppu->texture_nametable[0]);
+    UnloadRenderTexture(ppu->texture_nametable[1]);
+    UnloadRenderTexture(ppu->texture_pattern[0]);
+    UnloadRenderTexture(ppu->texture_pattern[1]);
     free(ppu);
     ppu = nullptr;
 }
